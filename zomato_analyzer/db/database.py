@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Iterable, Set, Tuple
 
 from zomato_analyzer.models.order import Order
 
@@ -156,6 +156,128 @@ class OrderDatabase:
             
             conn.commit()
             return True
+
+    def get_existing_order_ids(self) -> Set[str]:
+        """Return a set of all existing `order_id` values in the database."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id FROM orders")
+            rows = cursor.fetchall()
+            return {r[0] for r in rows}
+
+    def bulk_upsert_orders(self, orders: Iterable[Order], upsert: bool = False) -> Tuple[int, int, int]:
+        """Insert or update multiple orders in a single transaction.
+
+        Returns a tuple (inserted_count, updated_count, skipped_count).
+        When an order already exists, we will only perform an UPDATE if the
+        incoming order appears newer than the stored `updated_at` value
+        (based on `order.email_date` or `order.order_date`). Otherwise the
+        row is skipped to avoid unnecessary writes.
+        """
+        inserted = 0
+        updated = 0
+        skipped = 0
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Fetch existing updated_at timestamps to decide if we should update
+        existing_map = {}
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT order_id, updated_at FROM orders")
+            for row in cursor.fetchall():
+                existing_map[row['order_id']] = row['updated_at']
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            for order in orders:
+                existing_updated_iso = existing_map.get(order.order_id)
+                if existing_updated_iso:
+                    if not upsert:
+                        skipped += 1
+                        continue
+
+                    # Decide whether incoming order is newer than stored row
+                    try:
+                        existing_updated_dt = datetime.fromisoformat(existing_updated_iso)
+                        if existing_updated_dt.tzinfo is None:
+                            existing_updated_dt = existing_updated_dt.replace(tzinfo=timezone.utc)
+                        else:
+                            existing_updated_dt = existing_updated_dt.astimezone(timezone.utc)
+                    except Exception:
+                        existing_updated_dt = None
+
+                    # Use email_date if present, otherwise order_date
+                    incoming_dt = order.email_date or order.order_date
+                    if incoming_dt and incoming_dt.tzinfo is None:
+                        incoming_dt = incoming_dt.replace(tzinfo=timezone.utc)
+                    if incoming_dt and existing_updated_dt and incoming_dt <= existing_updated_dt:
+                        skipped += 1
+                        continue
+
+                    # Perform update
+                    cursor.execute("""
+                        UPDATE orders SET
+                            order_date = ?,
+                            restaurant_name = ?,
+                            amount = ?,
+                            delivery_fee = ?,
+                            discount = ?,
+                            total_amount = ?,
+                            status = ?,
+                            payment_method = ?,
+                            delivery_location = ?,
+                            order_items = ?,
+                            raw_email_body = ?,
+                            email_date = ?,
+                            updated_at = ?
+                        WHERE order_id = ?
+                    """, (
+                        order.order_date.isoformat(),
+                        order.restaurant_name,
+                        order.amount,
+                        order.delivery_fee,
+                        order.discount,
+                        order.total_amount,
+                        order.status,
+                        order.payment_method,
+                        order.delivery_location,
+                        order.order_items,
+                        order.raw_email_body,
+                        order.email_date.isoformat() if order.email_date else None,
+                        now,
+                        order.order_id
+                    ))
+                    updated += 1
+                else:
+                    cursor.execute("""
+                        INSERT INTO orders (
+                            order_id, order_date, restaurant_name, amount,
+                            delivery_fee, discount, total_amount, status,
+                            payment_method, delivery_location, order_items,
+                            raw_email_body, email_date, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        order.order_id,
+                        order.order_date.isoformat(),
+                        order.restaurant_name,
+                        order.amount,
+                        order.delivery_fee,
+                        order.discount,
+                        order.total_amount,
+                        order.status,
+                        order.payment_method,
+                        order.delivery_location,
+                        order.order_items,
+                        order.raw_email_body,
+                        order.email_date.isoformat() if order.email_date else None,
+                        now,
+                        now
+                    ))
+                    inserted += 1
+
+            conn.commit()
+
+        return inserted, updated, skipped
     
     def get_all_orders(self) -> List[Order]:
         """Get all orders from database."""
