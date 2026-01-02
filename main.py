@@ -17,19 +17,14 @@ import zomato_analyzer.config as config
 DB_PATH_HELP = 'Database path (default: %(default)s)'
 
 
-def _process_email(subject: str, from_addr: str, body: str, db: OrderDatabase) -> tuple:
+def _process_email(subject: str, from_addr: str, body: str, email_date: datetime, db: OrderDatabase) -> tuple:
     """
     Process a single email and extract order information.
     
     Returns:
         (success, message) tuple
     """
-    email_date = None
-    try:
-        email_date = parsedate_to_datetime(from_addr)
-    except Exception:
-        pass
-    
+
     order = ZomatoEmailParser.extract_order(subject, from_addr, body, email_date)
     
     if not order:
@@ -61,12 +56,19 @@ def ingest_mbox(mbox_path: str, db: OrderDatabase, verbose: bool = False) -> int
     
     print(f"Ingesting MBOX file: {mbox_path}")
     
-    for subject, from_addr, body in parser.parse():
+    for subject, from_addr, body, date_header in parser.parse():
         if not MBoxParser.validate_email(subject, from_addr):
             skipped += 1
             continue
+
+        email_date = None
+        if date_header:
+            try:
+                email_date = parsedate_to_datetime(date_header)
+            except Exception:
+                pass
         
-        success, message = _process_email(subject, from_addr, body, db)
+        success, message = _process_email(subject, from_addr, body, email_date, db)
         
         if success:
             inserted += 1
@@ -264,7 +266,7 @@ def main():
                 'orders': [
                     {
                         'order_id': o.order_id,
-                        'date': o.date.isoformat(),
+                        'order_date': o.order_date.isoformat(),
                         'restaurant': o.restaurant_name,
                         'total_amount': o.total_amount,
                         'delivery_fee': o.delivery_fee,
@@ -479,7 +481,7 @@ def main():
                 'orders': [
                     {
                         'order_id': o.order_id,
-                        'date': o.date.isoformat(),
+                        'order_date': o.order_date.isoformat(),
                         'restaurant': o.restaurant_name,
                         'total_amount': o.total_amount,
                         'delivery_fee': o.delivery_fee,

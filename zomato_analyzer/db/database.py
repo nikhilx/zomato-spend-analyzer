@@ -27,7 +27,7 @@ class OrderDatabase:
                 CREATE TABLE IF NOT EXISTS orders (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     order_id TEXT UNIQUE NOT NULL,
-                    date TEXT NOT NULL,
+                    order_date TEXT NOT NULL,
                     restaurant_name TEXT NOT NULL,
                     amount REAL NOT NULL,
                     delivery_fee REAL DEFAULT 0,
@@ -47,7 +47,7 @@ class OrderDatabase:
             # Create index for faster queries
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_order_date 
-                ON orders(date)
+                ON orders(order_date)
             """)
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_restaurant_name 
@@ -97,7 +97,7 @@ class OrderDatabase:
                 # Update existing order
                 cursor.execute("""
                     UPDATE orders SET
-                        date = ?,
+                        order_date = ?,
                         restaurant_name = ?,
                         amount = ?,
                         delivery_fee = ?,
@@ -112,7 +112,7 @@ class OrderDatabase:
                         updated_at = ?
                     WHERE order_id = ?
                 """, (
-                    order.date.isoformat(),
+                    order.order_date.isoformat(),
                     order.restaurant_name,
                     order.amount,
                     order.delivery_fee,
@@ -131,14 +131,14 @@ class OrderDatabase:
                 # Insert new order
                 cursor.execute("""
                     INSERT INTO orders (
-                        order_id, date, restaurant_name, amount,
+                        order_id, order_date, restaurant_name, amount,
                         delivery_fee, discount, total_amount, status,
                         payment_method, delivery_location, order_items,
                         raw_email_body, email_date, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     order.order_id,
-                    order.date.isoformat(),
+                    order.order_date.isoformat(),
                     order.restaurant_name,
                     order.amount,
                     order.delivery_fee,
@@ -161,7 +161,7 @@ class OrderDatabase:
         """Get all orders from database."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM orders ORDER BY date DESC")
+            cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
             rows = cursor.fetchall()
             
             return [self._row_to_order(row) for row in rows]
@@ -171,7 +171,7 @@ class OrderDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM orders WHERE restaurant_name = ? ORDER BY date DESC",
+                "SELECT * FROM orders WHERE restaurant_name = ? ORDER BY order_date DESC",
                 (restaurant_name,)
             )
             rows = cursor.fetchall()
@@ -184,8 +184,8 @@ class OrderDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM orders 
-                WHERE strftime('%Y', date) = ?
-                ORDER BY date DESC
+                WHERE strftime('%Y', order_date) = ?
+                ORDER BY order_date DESC
             """, (str(year),))
             rows = cursor.fetchall()
             
@@ -197,8 +197,8 @@ class OrderDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM orders 
-                WHERE strftime('%Y-%m', date) = ?
-                ORDER BY date DESC
+                WHERE strftime('%Y-%m', order_date) = ?
+                ORDER BY order_date DESC
             """, (f"{year:04d}-{month:02d}",))
             rows = cursor.fetchall()
             
@@ -226,7 +226,7 @@ class OrderDatabase:
         """Convert database row to Order object."""
         return Order(
             order_id=row['order_id'],
-            date=datetime.fromisoformat(row['date']),
+            order_date=datetime.fromisoformat(row['order_date']),
             restaurant_name=row['restaurant_name'],
             amount=row['amount'],
             delivery_fee=row['delivery_fee'],

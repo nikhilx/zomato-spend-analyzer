@@ -28,15 +28,18 @@ class ZomatoEmailParser:
     RESTAURANT_PATTERN = r'(?:Thank you for ordering (?:from)?|from)\s+([A-Za-z0-9\s&\-,.\']+?)(?:\s+ORDER|\s+Delivered|$)'
     RESTAURANT_IN_TAGS = r'<b>([A-Za-z0-9\s&\-,.\']+?)</b>'
     # Match 'Total paid', 'Total Amount' or 'Paid ₹...' as fallback
-    TOTAL_AMOUNT_PATTERN = r'(?:Total\s+(?:paid|Amount)?|Total Amount)[\s\w\-:]*?[\s]*₹\s*([\d,]+\.?\d*)'
-    PAID_AMOUNT_PATTERN = r'Paid\s*₹\s*([\d,]+\.?\d*)'
+    TOTAL_AMOUNT_PATTERN = (
+        r'(?:Total\s+(?:paid|amount|bill)?|Grand\s+Total|Total\s+Amount)'
+        r'[\s\w\-:]*?₹\s*([\d,]+(?:\.\d{1,2})?)'
+    )
+    PAID_AMOUNT_PATTERN = r'Paid[\s:]*₹\s*([\d,]+(?:\.\d{1,2})?)'
     DELIVERY_FEE_PATTERN = r'(?:Delivery\s+(?:Charges|Fee|Charge))[\s\w\-:]*?₹\s*([\d,]+\.?\d*)'
     DISCOUNT_PATTERN = r'(?:Discount|Promo)[\s\w\-:]*?₹\s*([\d,]+\.?\d*)'
-    DATE_PATTERN = r'(?:Order|Ordered)[\s\w\-:]*?([0-9]{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[^\d]*\d{4}[^>]*)'
+    DATE_PATTERN = r'(?:Order|Ordered|Issued|31\s+Jul|[0-3]?\d\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December))[^\d]*?([0-3]?\d\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[^\d]*\d{4}[^>]*)'
     
     @staticmethod
     def extract_order(subject: str, from_addr: str, body: str, 
-                     email_date: Optional[datetime] = None) -> Optional[Order]:
+        email_date: Optional[datetime] = None) -> Optional[Order]:
         """
         Extract order information from Zomato email.
         
@@ -80,7 +83,7 @@ class ZomatoEmailParser:
             # Create Order object
             order = Order(
                 order_id=order_id,
-                date=order_date,
+                order_date=order_date,
                 restaurant_name=restaurant_name,
                 amount=amount,
                 delivery_fee=delivery_fee,
@@ -176,18 +179,19 @@ class ZomatoEmailParser:
     
     @staticmethod
     def _extract_total_amount(body: str) -> Optional[float]:
+        body = re.sub(r'\s+', ' ', body)
         """Extract total amount from body."""
-        # Primary pattern
-        match = re.search(ZomatoEmailParser.TOTAL_AMOUNT_PATTERN, body, re.IGNORECASE)
+        # Fallback: look for 'Paid ₹...' which appears in Pro Plus templates
+        match = re.search(ZomatoEmailParser.PAID_AMOUNT_PATTERN, body, re.IGNORECASE)
         if match:
             amount_str = match.group(1).replace(',', '')
             try:
                 return float(amount_str)
             except ValueError:
                 pass
-
-        # Fallback: look for 'Paid ₹...' which appears in Pro Plus templates
-        match = re.search(ZomatoEmailParser.PAID_AMOUNT_PATTERN, body, re.IGNORECASE)
+        
+        # Primary pattern
+        match = re.search(ZomatoEmailParser.TOTAL_AMOUNT_PATTERN, body, re.IGNORECASE)
         if match:
             amount_str = match.group(1).replace(',', '')
             try:
@@ -226,14 +230,16 @@ class ZomatoEmailParser:
     @staticmethod
     def _extract_order_date(body: str, email_date: Optional[datetime] = None) -> datetime:
         """Extract order date from body or use email date as fallback."""
+
+        # Normalize HTML early
+        body = re.sub(r'<[^>]+>', ' ', body)
+        body = re.sub(r'\s+', ' ', body).strip()
+
+        # Try detailed formats first
         match = re.search(ZomatoEmailParser.DATE_PATTERN, body, re.IGNORECASE)
         if match:
             date_str = match.group(1).strip()
-            # Remove HTML tags if present
-            date_str = re.sub(r'<[^>]+>', '', date_str)
-            date_str = date_str[:50]  # Limit to reasonable length
-            
-            # Try to parse common date formats
+
             for date_format in [
                 '%d %b %Y, %I:%M %p',
                 '%d %B %Y, %I:%M %p',
@@ -242,16 +248,30 @@ class ZomatoEmailParser:
                 '%d %b %Y',
                 '%d %B %Y',
                 '%d %b %Y, %H:%M',
-                '%d %B %Y, %H:%M'
+                '%d %B %Y, %H:%M',
+                '%d %b, %I:%M %p',      # no year
+                '%d %B, %I:%M %p'
             ]:
                 try:
-                    return datetime.strptime(date_str, date_format)
+                    parsed = datetime.strptime(date_str, date_format)
+                    if '%Y' not in date_format and email_date:
+                        parsed = parsed.replace(year=email_date.year)
+                    return parsed
                 except ValueError:
                     continue
-        
-        # Fallback to email date
+
+        # Simpler fallback (date only)
+        simple_date_pattern = r'(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)'
+        match = re.search(simple_date_pattern, body, re.IGNORECASE)
+        if match and email_date:
+            try:
+                parsed = datetime.strptime(match.group(1), '%d %b')
+                return parsed.replace(year=email_date.year)
+            except ValueError:
+                pass
+
+        # Correct fallback
         if email_date:
             return email_date
-        
-        # Fallback to now
-        return datetime.now()
+
+        raise ValueError("Unable to determine order date")

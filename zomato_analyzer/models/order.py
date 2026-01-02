@@ -8,7 +8,7 @@ from typing import Optional
 class Order:
     """Represents a Zomato order."""
     order_id: str
-    date: datetime
+    order_date: datetime
     restaurant_name: str
     amount: float
     delivery_fee: float = 0.0
@@ -24,14 +24,14 @@ class Order:
     @property
     def year(self) -> int:
         """Extract year from order date."""
-        return self.date.year
+        return self.order_date.year
     
     @property
     def month(self) -> int:
         """Extract month from order date."""
-        return self.date.month
+        return self.order_date.month
     
     @property
     def month_year(self) -> str:
         """Return month-year string."""
-        return self.date.strftime("%Y-%m")
+        return self.order_date.strftime("%Y-%m")

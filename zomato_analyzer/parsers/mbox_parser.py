@@ -28,6 +28,7 @@ class MBoxParser:
             for message in mbox:
                 subject = message.get('subject', '')
                 from_addr = message.get('from', '')
+                date_header = message.get("Date")
                 
                 # Extract email body
                 body = ""
@@ -48,7 +49,7 @@ class MBoxParser:
                     except Exception:
                         pass  # If decoding fails, keep original
                 
-                yield subject, from_addr, body
+                yield subject, from_addr, body, date_header
         
         except Exception as e:
             raise RuntimeError(f"Error parsing MBOX file: {e}")
